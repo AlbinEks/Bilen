@@ -1,0 +1,232 @@
+void reading_object();
+int sensor_reading();
+void RFID();
+
+//Servomotorn
+#include <Servo.h>
+int angle;
+Servo servo;
+
+//Avståndsläsaren
+const unsigned int TRIG_PIN=7;
+const unsigned int ECHO_PIN=6;
+
+//Hjulen, XHY = Höger/Vänster Hjul Fram/Bak
+const unsigned int HHF = 5, HHB = 4, VHF = 3, VHB = 2; /*HHF = Höger hjul framåt, VHF = Vänster hjul framåt,
+                                                         HHB = Höger hjul bakåt, VHB = Vänster hjul bakåt*/
+//Vilken sida som är närmst väggen
+int vinkel[170]; //deklarerar en array som samlar värdet från ultraljudsmätaren vid olika vinklar
+int hsida, vsida; //Höger sida respektive vänster sida
+
+//Linjeföljare
+int HL = A1; //HL = Höger linjeföljare
+int VL = A0; //VL = Vänster linjeföljare
+int HLV, VLV; //HLV = Höger linjeföljare värde, VLV = Vänster linjeföljare värde
+
+
+//RFID reading
+#include <SPI.h>
+#include <MFRC522.h>
+#define SS_PIN 10
+#define RST_PIN 9
+MFRC522 rfid(SS_PIN, RST_PIN); // Instance of the class
+MFRC522::MIFARE_Key key; 
+// Init array that will store new NUID 
+byte nuidPICC[4];
+
+
+void setup() {
+  //Hjulen
+  pinMode(HHF, OUTPUT);
+  pinMode(HHB, OUTPUT);
+  pinMode(VHF, OUTPUT);
+  pinMode(VHB, OUTPUT);
+
+  //Linjeföljare
+  pinMode(VL, INPUT);
+  pinMode(HL, INPUT);
+
+  //Avståndsläsaren
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  //Servomotorn
+  servo.attach(8);
+  servo.write(angle);
+
+  //Läsrutan
+  Serial.begin(9600);
+  Serial.println("Ready");
+
+  //RFID
+  SPI.begin(); // Init SPI bus
+  rfid.PCD_Init(); // Init MFRC522 
+
+  for (byte i = 0; i < 6; i++) {
+    key.keyByte[i] = 0xFF;
+  }
+
+  Serial.println(F("This code scan the MIFARE Classsic NUID."));
+  Serial.print(F("Using the following key:"));
+  //printHex(key.keyByte, MFRC522::MF_KEY_SIZE);
+}
+
+
+void loop() {
+  servo.write(90); //Sätter servomotorn till 90 grader
+  delay(30);
+  analogWrite(VHF, 230);
+  analogWrite(HHF, 230);
+
+  HLV = analogRead(HL);
+  Serial.println(HLV);
+  VLV = analogRead(VL);
+  Serial.println(VLV);
+
+  if(VLV > 800){
+    digitalWrite(HHF, LOW);
+    delay(150);
+    }
+    
+  if(HLV > 800){
+    digitalWrite(VHF, LOW);
+    delay(150);
+    }
+
+  sensor_reading();
+  
+  if(sensor_reading() < 350) {
+    reading_object();
+  }
+
+  RFID();
+}
+
+int sensor_reading(){
+  //Läser av omgivningen framför den
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  
+  const unsigned long duration= pulseIn(ECHO_PIN, HIGH);
+  delay(15);
+  
+  return duration;
+}
+
+void reading_object(){
+  digitalWrite(HHB, LOW);
+  digitalWrite(VHB, LOW);
+  digitalWrite(HHF, LOW);
+  digitalWrite(VHF, LOW);
+
+  //Styr från 0-180 med avläsning, från int angle 10-95 avläsning vänster sida, från int angle 96-180 avläsning höger sida
+    for(angle = 10; angle < 180; angle++)  
+  {  
+    if(angle == 10 || angle == 60 || angle == 110 || angle == 160 || angle == 170){                                
+    servo.write(angle);                
+    }
+
+    sensor_reading();
+    vinkel[angle] = sensor_reading();                   
+  } 
+  
+  //Styr tillbaks från 180 till 0 grader utan avläsning
+  for(angle = 180; angle > 10; angle = angle - 20)    
+  {                                
+    servo.write(angle);           
+    delay(15);       
+  }
+
+  //Adderar ihop hela vänster sida 
+  for(int t = 0; t <= 85; t++){
+    vsida = vinkel[t] + vsida;
+    }
+
+  //Adderar ihop hela höger sida
+  for(int t = 85; t < 170; t++){
+    hsida = vinkel[t] + hsida;
+    }
+
+  //Om höger sida är större än vänster sida 
+  if(hsida > vsida){
+    digitalWrite(HHB, HIGH);
+    digitalWrite(VHB, HIGH);
+    delay(200);
+    digitalWrite(HHB, LOW);
+    digitalWrite(VHB, LOW);
+    digitalWrite(VHF, HIGH);
+    delay(250);
+    digitalWrite(HHF, HIGH);
+    delay(500);
+    digitalWrite(HHB, LOW);
+    digitalWrite(VHB, LOW);
+    digitalWrite(HHF, HIGH);
+    delay(250);
+    digitalWrite(VHF, HIGH);
+    delay(1000);
+    digitalWrite(VHF, LOW);
+    delay(250);
+    digitalWrite(VHF,HIGH);
+    delay(500);
+    digitalWrite(HHF, LOW);
+    
+    }
+
+  //Om vänster sida är större än högersida
+    else{
+    digitalWrite(HHB, HIGH);
+    digitalWrite(VHB, HIGH);
+    delay(500);
+    digitalWrite(HHB, LOW);
+    digitalWrite(VHB, LOW);
+    digitalWrite(HHF, HIGH);
+    delay(800);
+    digitalWrite(VHF, HIGH);
+    }
+}
+
+void RFID(){
+
+  //Reset the loop if no new card present on the sensor/reader. This saves the entire process when idle.
+  if ( ! rfid.PICC_IsNewCardPresent())
+    return;
+
+  //Verify if the NUID has been readed
+  if ( ! rfid.PICC_ReadCardSerial())
+    return;
+
+    Serial.println();
+    Serial.print(F("In hex: "));
+    printHex(rfid.uid.uidByte, rfid.uid.size);
+    Serial.println();
+
+  // Halt PICC
+  rfid.PICC_HaltA();
+
+  // Stop encryption on PCD
+  rfid.PCD_StopCrypto1();
+
+  if (rfid.uid.uidByte[0] == 0xC3 || 
+    rfid.uid.uidByte[1] == 0x7B || 
+    rfid.uid.uidByte[2] == 0x35 || 
+    rfid.uid.uidByte[3] == 0x31 ) {
+    Serial.println("Kapetown: 1");
+  }
+
+  if (rfid.uid.uidByte[0] == 0xD7 || 
+    rfid.uid.uidByte[1] == 0x25 || 
+    rfid.uid.uidByte[2] == 0xB5 || 
+  rfid.uid.uidByte[3] == 0x26 ) {
+    Serial.println("Kapetown: 2");
+  }
+}
+
+void printHex(byte *buffer, byte bufferSize) {
+  for (byte i = 0; i < bufferSize; i++) {
+    Serial.print(buffer[i] < 0x10 ? " 0" : " ");
+    Serial.print(buffer[i], HEX);
+  }
+}
